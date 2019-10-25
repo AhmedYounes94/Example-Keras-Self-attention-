@@ -6,23 +6,26 @@ from keras.layers import Layer
 class SelfAttention(Layer):
     def __init__(self, 
                  aspect_size,
-                 hidden_dim, 
+                 hidden_dim,
+                 penalty=1.0,
+                 return_attention=False,
                  kernel_initializer='glorot_uniform',
                  kernel_regularizer=None,
                  kernel_constraint=None,
                  **kwargs):
         self.aspect_size = aspect_size
         self.hidden_dim = hidden_dim
+        self.penalty = penalty
         self.kernel_initializer = keras.initializers.get(kernel_initializer)
         self.kernel_regularizer = keras.regularizers.get(kernel_regularizer)
         self.kernel_constraint = keras.constraints.get(kernel_constraint)
+        self.return_attention = return_attention
         super(SelfAttention, self).__init__(**kwargs)
 
     def build(self, input_shape):
         # input_shape: (None, Sequence_size, Sequence_hidden_dim)
         assert len(input_shape) >= 3
-        sequence_size = input_shape[1]
-        sequence_hidden_dim = input_shape[-1]
+        batch_size, sequence_size, sequence_hidden_dim = input_shape
         
         self.Ws1 = self.add_weight(shape=(self.hidden_dim, sequence_hidden_dim),
                                       initializer=self.kernel_initializer,
@@ -50,24 +53,34 @@ class SelfAttention(Layer):
         A_t = K.permute_dimensions(A, (0,2,1))
         I = K.eye(self.aspect_size)
         P = K.square(self._frobenius_norm(K.batch_dot(A, A_t) - I)) # P = (frobenius_norm(dot(A, A.T) - I))**2
-        self.add_loss(P/batch_size)
-        return outputs
+        self.add_loss(self.penalty*(P/batch_size))
+        
+        if self.return_attention: 
+            return [outputs, A]
+        else: 
+            return outputs
 
     def compute_output_shape(self, input_shape):
         assert input_shape and len(input_shape) >= 3
         assert input_shape[-1]
-        batch_size = input_shape[0]
-        sequence_hidden_dim = input_shape[-1]
-        output_shape = [batch_size, self.aspect_size, sequence_hidden_dim]
-        return tuple(output_shape)
+        batch_size, sequence_size, sequence_hidden_dim = input_shape
+        output_shape = tuple([batch_size, self.aspect_size, sequence_hidden_dim])
+        
+        if self.return_attention:
+            attention_shape = tuple([batch_size, self.aspect_size, sequence_size])
+            return [output_shape, attention_shape]
+        else: return output_shape
+
 
     def get_config(self):
         config = {
             'aspect_size': self.aspect_size,
             'hidden_dim': self.hidden_dim,
+            'penalty':self.penalty,
+            'return_attention': self.return_attention,
             'kernel_initializer': initializers.serialize(self.kernel_initializer),
             'kernel_regularizer': regularizers.serialize(self.kernel_regularizer),
-            'kernel_constraint': constraints.serialize(self.kernel_constraint),
+            'kernel_constraint': constraints.serialize(self.kernel_constraint)
         }
         base_config = super(SelfAttention, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
@@ -75,4 +88,3 @@ class SelfAttention(Layer):
     def _frobenius_norm(self, inputs):
         outputs = K.sqrt(K.sum(K.square(inputs)))
         return outputs
-        
